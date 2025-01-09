@@ -1,0 +1,1 @@
+pitch level to sine wave equiv (kinda): https://stackoverflow.com/questions/64958186/numpy-generate-sine-wave-signal-with-time-varying-frequency
