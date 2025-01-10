@@ -28,14 +28,17 @@ bits = 16
 type_bits = np.int16
 format_bits = '<h'
 byte_width = int(bits / 8)
-length = np.linspace(0, length_seconds, sample_rate * length_seconds)
-amplitude = (2**bits)-1 # max for n-bit audio
+length = sample_rate * length_seconds
+amplitude = (2**(bits-1))-1 # max for n-bit audio
+print(f"B: {bits}")
+print(f"BW: {byte_width}")
+print(f"MAX: {amplitude}")
 #y = amplitude * np.sin(freq * 2 * np.pi * length)
 #y = y.astype(np.int16)
-time = np.arange(0, length_seconds, 1/sample_rate)
-frequencies = np.array(list([bez2(t, wy) for t in time]))
+time = microstep((sample_rate*length_seconds)**-1)
+frequencies = np.array([bez2(t, wy) for t in time]) * 8
 
-phases = np.cumsum(2 * np.pi * frequencies / sample_rate)
+phases = np.pi * np.cumsum(frequencies) / sample_rate
 sine_wave = amplitude * np.sin(phases)
 sine_wave = sine_wave.astype(type_bits)
 
@@ -43,7 +46,7 @@ wav = wave.open("out.wav", 'wb')
 wav.setnchannels(1)
 wav.setframerate(sample_rate)
 wav.setsampwidth(byte_width)
-wav.writeframes(sine_wave.tobytes())
+wav.writeframes(sine_wave)
 
 # Plot the Bézier curve (frequency modulation)
 plt.figure(figsize=(10, 4))
@@ -55,7 +58,7 @@ plt.grid()
 
 # Plot the first part of the sine wave
 plt.figure(figsize=(10, 4))
-plt.plot(time[:1000], sine_wave[:1000])  # Show the first 1000 samples
+plt.plot(time[:2000], sine_wave[:2000])  # Show the first 1000 samples
 plt.title("Generated Sine Wave (Zoomed In)")
 plt.xlabel("Time (s)")
 plt.ylabel("Amplitude")
