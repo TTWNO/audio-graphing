@@ -107,8 +107,12 @@ fn test_main_func() {
         -24919, 32021, -14044, -27476
     );
     // These were the points used in the Python impl.
-    let (p1, p2, p3) = (80.0, 10.0, 80.0);
-    let ans: Vec<i16> = from_q3_points(p1, p2, p3, 48_000.0, 2.0).collect();
+    let quad = Quadradic { 
+        p1: Point { x: 0.0, y: 80.0},
+        p2: Point { x: 0.0, y: 10.0},
+        p3: Point { x: 0.0, y: 80.0},
+    };
+    let ans: Vec<i16> = quad.samples(48_000.0, 2.0).collect();
     assert_eq!(
         (ans[2000], ans[4000], ans[90000], ans[95000]),
         correct_values
