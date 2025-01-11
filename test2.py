@@ -36,7 +36,7 @@ print(f"MAX: {amplitude}")
 #y = amplitude * np.sin(freq * 2 * np.pi * length)
 #y = y.astype(np.int16)
 time = microstep((sample_rate*length_seconds)**-1)
-frequencies = np.array([bez2(t, wy) for t in time]) * 8
+frequencies = np.array([bez2(t, wy) for t in time])
 
 phases = np.pi * np.cumsum(frequencies) / sample_rate
 sine_wave = amplitude * np.sin(phases)
