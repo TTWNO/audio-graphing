@@ -40,30 +40,105 @@ impl Interpolate for Cubic {
     }
 }
 
+/// Flip a points' x and y axes.
+pub trait Flip {
+    fn flip(&self) -> Self;
+}
+
+impl Flip for Point {
+    fn flip(&self) -> Self {
+        Point {
+            x: self.y,
+            y: self.x,
+        }
+    }
+}
+impl Flip for Linear {
+    fn flip(&self) -> Self {
+        Linear {
+            p1: self.p1.flip(),
+            p2: self.p2.flip(),
+        }
+    }
+}
+impl Flip for Quadradic {
+    fn flip(&self) -> Self {
+        Quadradic {
+            p1: self.p1.flip(),
+            p2: self.p2.flip(),
+            p3: self.p3.flip(),
+        }
+    }
+}
+impl Flip for Cubic {
+    fn flip(&self) -> Self {
+        Cubic {
+            p1: self.p1.flip(),
+            p2: self.p2.flip(),
+            p3: self.p3.flip(),
+            p4: self.p4.flip(),
+        }
+    }
+}
+
+/// Amplitude for 16 bit WAV sound: (2^15)-1
+const AMPLITUDE: f64 = 32767.0;
+
+pub trait SampleIter: Iterator<Item = f64> {
+    /// Interpolate value given a interpolatable value (inter) and a series of points in time as
+    /// `f64`s (self).
+    fn interpolate<T>(self, inter: &T) -> impl Iterator<Item = f64> 
+    where Self: Sized,
+          T: Interpolate {
+        self.map(move |f| inter.expr(f))
+    }
+    /// normalize value (-1 < x < 1)
+    fn normalize(self, sample_rate: f64) -> impl Iterator<Item = f64> 
+    where Self: Sized {
+        self.map(move |freq| {
+                normalize(freq, sample_rate)
+            })
+    }
+    /// apply amplitude (loudness)
+    fn amplitude(self, amp: f64) -> impl Iterator<Item = f64> 
+    where Self: Sized {
+        self.map(move |norm_freq| {
+                amp * norm_freq
+            })
+    }
+    /// cumsum - flatten out the changes to produce smoother transitions
+    fn cumsum(self) -> impl Iterator<Item = f64> 
+    where Self: Sized {
+        self.scan(0.0, |acc, freq| {
+                *acc += freq;
+                Some(*acc)
+            })
+    }
+    fn as_i16(self) -> impl Iterator<Item = i16> 
+    where Self: Sized {
+            self.map(|f| f as i16)
+    }
+}
+impl<I> SampleIter for I
+where I: Iterator<Item = f64> {}
+
+/// Converts a frequency to a signed normalized value (-1 <= x <= 1).
+fn normalize(freq: f64, sample_rate: f64) -> f64 {
+    (freq * PI / sample_rate).sin()
+}
+
 pub trait Interpolate {
     /// Interpolate the y value of the curve at point t (between 0 and 1)
     fn expr(&self, t: f64) -> f64;
     /// Create audio samples
-    fn samples(&self, sample_rate: f64, len_seconds: f64) -> impl Iterator<Item = i16> {
-        let amplitude = 2.0f64.powi(15) - 1.0;
+    fn samples(&self, sample_rate: f64, len_seconds: f64) -> impl Iterator<Item = i16> 
+    where Self: Sized {
         microsteps(sample_rate, len_seconds)
-            .map(move |t| {
-                self.expr(t)
-            })
-            // cumsum - flatten out the changes to produce smoother transitions
-            .scan(0.0, |acc, freq| {
-                *acc += freq;
-                Some(*acc)
-            })
-            // normalize value (-1 < x < 1)
-            .map(move |mm_freq| {
-                (mm_freq * PI / sample_rate).sin()
-            })
-            // apply amplitude (loudness)
-            .map(move |norm_freq| {
-                amplitude * norm_freq
-            })
-            .map(move |f| f as i16)
+            .interpolate(self)
+            .cumsum()
+            .normalize(sample_rate)
+            .amplitude(AMPLITUDE)
+            .as_i16()
     }
 }
 
