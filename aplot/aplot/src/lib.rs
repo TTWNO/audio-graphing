@@ -4,12 +4,90 @@
 
 use core::f64::consts::PI;
 
+pub struct Point {
+    pub x: f64,
+    pub y: f64
+}
+
+pub struct Linear {
+    p1: Point,
+    p2: Point,
+}
+pub struct Quadradic {
+    pub p1: Point,
+    pub p2: Point,
+    pub p3: Point,
+}
+pub struct Cubic {
+    p1: Point,
+    p2: Point,
+    p3: Point,
+    p4: Point,
+}
+impl Interpolate for Linear {
+    fn expr(&self, t: f64) -> f64 {
+        linear(t, self.p1.y, self.p2.y)
+    }
+}
+impl Interpolate for Quadradic {
+    fn expr(&self, t: f64) -> f64 {
+        quadradic_bezier(t, self.p1.y, self.p2.y, self.p3.y)
+    }
+}
+impl Interpolate for Cubic {
+    fn expr(&self, t: f64) -> f64 {
+        cubic_bezier(t, self.p1.y, self.p2.y, self.p3.y, self.p4.y)
+    }
+}
+
+pub trait Interpolate {
+    /// Interpolate the y value of the curve at point t (between 0 and 1)
+    fn expr(&self, t: f64) -> f64;
+    /// Create audio samples
+    fn samples(&self, sample_rate: f64, len_seconds: f64) -> impl Iterator<Item = i16> {
+        let amplitude = 2.0f64.powi(15) - 1.0;
+        microsteps(sample_rate, len_seconds)
+            .map(move |t| {
+                self.expr(t)
+            })
+            // cumsum - flatten out the changes to produce smoother transitions
+            .scan(0.0, |acc, freq| {
+                *acc += freq;
+                Some(*acc)
+            })
+            // normalize value (-1 < x < 1)
+            .map(move |mm_freq| {
+                (mm_freq * PI / sample_rate).sin()
+            })
+            // apply amplitude (loudness)
+            .map(move |norm_freq| {
+                amplitude * norm_freq
+            })
+            .map(move |f| f as i16)
+    }
+}
+
+/// NOTE: `t` must be between 0 and 1.
+fn linear(t: f64, p1: f64, p2: f64) -> f64 {
+    p1 + (p2 * t)
+}
+
 /// NOTE: `t` must be between 0 and 1.
 fn quadradic_bezier(t: f64, p1: f64, p2: f64, p3: f64) -> f64 {
     let t2 = t*t;
     let mt = 1.0-t;
     let mt2 = mt*mt;
     (p1 * mt2) + (p2 * 2.0 * mt * t) + (p3*t2)
+}
+
+/// NOTE: `t` must be between 0 and 1.
+fn cubic_bezier(t: f64, p1: f64, p2: f64, p3: f64, p4: f64) -> f64 {
+    let t2 = t * t;
+    let t3 = t2 * t;
+    let mt = 1.0-t;
+    let mt2 = mt * mt;
+    let mt3 = mt2 * mt;
+    p1*mt3 + 3.0*p2*mt2*t + 3.0*p3*mt*t2 + p4*t3
 }
 
 #[test]
