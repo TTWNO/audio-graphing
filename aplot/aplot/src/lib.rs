@@ -10,8 +10,8 @@ pub struct Point {
 }
 
 pub struct Linear {
-    p1: Point,
-    p2: Point,
+    pub p1: Point,
+    pub p2: Point,
 }
 pub struct Quadradic {
     pub p1: Point,
@@ -69,7 +69,7 @@ pub trait Interpolate {
 
 /// NOTE: `t` must be between 0 and 1.
 fn linear(t: f64, p1: f64, p2: f64) -> f64 {
-    p1 + (p2 * t)
+    p1 + ((p2-p1) * t)
 }
 
 /// NOTE: `t` must be between 0 and 1.
@@ -116,31 +116,8 @@ fn test_main_func() {
 }
 
 fn microsteps(sample_rate: f64, length_seconds: f64) -> impl Iterator<Item = f64> {
-    let max = sample_rate.round() as u32 * length_seconds.round() as u32;
+    let max = (sample_rate * length_seconds).round() as u32;
     let over1 = (sample_rate * length_seconds).recip();
     (0..=max)
         .map(move |i: u32| (i as f64) * over1)
 }
-
-pub fn from_q3_points(p1: f64, p2: f64, p3: f64, sample_rate: f64, len_seconds: f64) -> impl Iterator<Item = i16> {
-    let amplitude = 2.0f64.powi(15) - 1.0;
-    microsteps(sample_rate, len_seconds)
-        .map(move |t| {
-            quadradic_bezier(t, p1, p2, p3)
-        })
-        // cumsum - flatten out the changes to produce smoother transitions
-        .scan(0.0, |acc, freq| {
-            *acc += freq;
-            Some(*acc)
-        })
-        // normalize value (-1 < x < 1)
-        .map(move |mm_freq| {
-            (mm_freq * PI / sample_rate).sin()
-        })
-        // apply amplitude (loudness)
-        .map(move |norm_freq| {
-            amplitude * norm_freq
-        })
-        .map(move |f| f as i16)
-}
-
