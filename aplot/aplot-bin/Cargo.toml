@@ -1,0 +1,8 @@
+[package]
+name = "aplot-bin"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aplot = { path = "../aplot" }
+hound = "3.5.1"
