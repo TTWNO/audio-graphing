@@ -1,36 +1,32 @@
 use aplot;
 use hound;
-use aplot::{Interpolate, Point};
+use aplot::{Segments, Config};
+
+const SVG_PATH: &'static str = "M 100 880 Q 525 100, 950 800 T 1800 800";
 
 fn main() {
+    let config = Config {
+        sample_rate: 48_000,
+        time_seconds: 2.5,
+        min_val: 100.0,
+        max_val: 1500.0,
+        min_pitch: 800.0,
+        max_pitch: 2300.0,
+        reverse: true,
+        start: 0.5,
+        len: 0.2,
+    };
     let spec = hound::WavSpec {
         channels: 1,
-        sample_rate: 48_000,
+        sample_rate: config.sample_rate as u32,
         bits_per_sample: 16,
         sample_format: hound::SampleFormat::Int,
     };
-    let line1 = aplot::Linear {
-        p1: Point { x: 10.0, y: 10.0*8.0 },
-        p2: Point { x: 10.0, y: 150.0*8.0 },
-    };
-    let line2 = aplot::Linear {
-        p1: Point { x: 10.0, y: 150.0*8.0 },
-        p2: Point { x: 10.0, y: 80.0*8.0 },
-    };
-    let quad = aplot::Quadradic {
-        p1: Point { x: 10.0, y: 80.0*8.0 },
-        p2: Point { x: 52.5, y: 10.0*8.0 },
-        p3: Point { x: 90.0, y: 80.0*8.0 },
-    };
+    let segs = Segments::from_path(SVG_PATH).unwrap();
     let mut writer = hound::WavWriter::create("out.wav", spec).unwrap();
-    for sample in line1.samples(48_000.0, 0.25) {
-        writer.write_sample(sample).unwrap();
-    }
-    for sample in line2.samples(48_000.0, 0.25) {
-        writer.write_sample(sample).unwrap();
-    }
-    for sample in quad.samples(48_000.0, 2.0) {
-        writer.write_sample(sample).unwrap();
-    }
+    let _ = segs.all_samples(config)
+        .for_each(|samp| {
+            writer.write_sample(samp).unwrap();
+        });
     writer.finalize().unwrap();
 }
