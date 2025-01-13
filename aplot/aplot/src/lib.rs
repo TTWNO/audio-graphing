@@ -199,6 +199,24 @@ impl Segments {
             .collect::<Vec<Segment>>();
         Ok(Self { inner: segs })
     }
+    /// Renders a sample at a given decimal percentage (`sample_place`) as the normal-length time
+    /// given via Config.
+    ///
+    /// This means, given a point in time, render that same frequency for a time:
+    /// [`Config::time_seconds`].
+    pub fn one_continuous_sample(&self, c: Config, sample_place: f64) -> impl Iterator<Item = i16> {
+        let time_per_each = self.inner.iter()
+            .map(SegmentExt::lengthx)
+            .normalize_sum()
+            .map(move |norm| norm*c.time_seconds);
+        self.inner.iter()
+            .zip(time_per_each)
+            .map(move |(seg,time_per)| {
+                microsteps(c.sample_rate as f64, time_per).interpolate(seg)
+            })
+            .flatten()
+            .plot_audio(c)
+    }
     pub fn all_samples(&self, c: Config) -> impl Iterator<Item = i16> + use<'_> {
         let time_per_each = self.inner.iter()
             .map(SegmentExt::lengthx)

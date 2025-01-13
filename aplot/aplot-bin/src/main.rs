@@ -3,7 +3,7 @@ use hound;
 use aplot::{Segments, Config, PlottingFunc};
 
 const SVG_PATH: &'static str = "M 10 80 Q 52.5 10, 55 80 T 180 80";
-const EXPR: &'static str = "sin(x/5) * 5 + 100";
+const EXPR: &'static str = "sin(x) * 15 + 100";
 
 fn main() {
     let config = Config {
@@ -34,7 +34,7 @@ fn main() {
     
     /// From math expression to SVG path and audio samples
     let expr = PlottingFunc::from_str(EXPR).unwrap();
-    println!("<path d=\"{}\" stroke=\"navy\" fill=\"transparent\"/>", expr.to_path_segments(100, 200.0).unwrap());
+    println!("<path d=\"{}\" stroke=\"navy\" fill=\"transparent\"/>", expr.to_path_segments(250, 200.0).unwrap());
     expr.all_samples(config, 200.0)
         .unwrap()
         .for_each(|samp| {
