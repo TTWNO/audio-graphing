@@ -32,7 +32,6 @@ impl PlottingFunc {
             })
             .collect::<Result<Vec<f64>, fasteval::Error>>()?
             .into_iter()
-            .inspect(|v| println!("{}", v))
             .plot_audio(c)
             )
     }
