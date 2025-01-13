@@ -4,6 +4,98 @@
 
 use core::f64::consts::PI;
 use itertools::Itertools;
+use fasteval::{Evaler, Compiler, Slab, Parser, Instruction};
+
+pub struct PlottingFunc {
+    slab: Slab,
+    inner: Instruction,
+}
+impl PlottingFunc {
+    pub fn from_str(s: &str) -> Result<Self, fasteval::Error> {
+        let parser = Parser::new();
+        let mut slab = Slab::new();
+        let compiled = parser.parse(s, &mut slab.ps)?.from(&slab.ps).compile(&slab.ps, &mut slab.cs);
+        Ok(Self { inner: compiled, slab })
+    }
+    pub fn all_samples(&self, c: Config, factor_x: f64) -> Result<impl Iterator<Item = i16>, fasteval::Error> {
+        Ok(
+        microsteps(c.sample_rate as f64, c.time_seconds)
+            .map(move |f| f * factor_x)
+            .map(move |f| {
+                let mut cb = move |name:&str, _args:Vec<f64>| -> Option<f64> {
+                    match name {
+                        "x" => Some(f),
+                        _ => None,
+                    }
+                };
+                self.inner.eval(&self.slab, &mut cb)
+            })
+            .collect::<Result<Vec<f64>, fasteval::Error>>()?
+            .into_iter()
+            .inspect(|v| println!("{}", v))
+            .plot_audio(c)
+            )
+    }
+    pub fn to_path_segments(&self, line_segments: usize, factor_x: f64) -> Result<String, fasteval::Error> {
+        Ok(
+        microsteps(line_segments as f64, 1.0)
+            .map(move |f| f * factor_x)
+            .map(move |f| {
+                let mut cb = move |name:&str, _args:Vec<f64>| -> Option<f64> {
+                    match name {
+                        "x" => Some(f),
+                        _ => None,
+                    }
+                };
+                Ok((f, self.inner.eval(&self.slab, &mut cb)?))
+            })
+            .collect::<Result<Vec<(f64, f64)>, fasteval::Error>>()?
+            .into_iter()
+            .tuple_windows()
+            .map(|((fl, left), (fr, right))| {
+                Linear {
+                    p1: Point { x: fl, y: left },
+                    p2: Point { x: fr, y: right },
+                }
+            })
+            .map(|lin| SegmentExt::as_str(&lin))
+            .collect::<Vec<String>>()
+            .join(" ")
+            )
+    }
+}
+
+trait SegmentExt {
+    /// Outputs the length of the path, given as a floating-point value.
+    /// TODO: The calculations are wrong for curves which go backwards temporarily. In these cases,
+    /// we should take into account their entire length, not just just horizontal.
+    fn lengthx(&self) -> f64;
+    fn as_str(&self) -> String;
+}
+impl SegmentExt for Linear {
+    fn lengthx(&self) -> f64 {
+        (self.p2.x - self.p1.x).abs()
+    }
+    fn as_str(&self) -> String {
+        format!("M {} {} L {} {}", self.p1.x, self.p1.y, self.p2.x, self.p2.y)
+    }
+}
+impl SegmentExt for Quadradic {
+    fn lengthx(&self) -> f64 {
+        (self.p3.x - self.p1.x).abs()
+    }
+    fn as_str(&self) -> String {
+        format!("M {} {} Q {} {}, {} {}", self.p1.x, self.p1.y, self.p2.x, self.p2.y, self.p3.x, self.p3.y)
+    }
+}
+impl SegmentExt for Cubic {
+    fn lengthx(&self) -> f64 {
+        (self.p4.x - self.p1.x).abs()
+    }
+    fn as_str(&self) -> String {
+        format!("M {} {} C {} {}, {} {}, {} {}", self.p1.x, self.p1.y, self.p2.x, self.p2.y, self.p3.x, self.p3.y, self.p4.x, self.p4.y)
+    }
+}
 
 #[derive(Debug)]
 pub struct Point {
@@ -109,26 +201,17 @@ impl Segments {
         Ok(Self { inner: segs })
     }
     pub fn all_samples(&self, c: Config) -> impl Iterator<Item = i16> + use<'_> {
-        let time_per = c.time_seconds / self.inner.len() as f64;
-        let all_samples = c.sample_rate as f64 * c.time_seconds;
-        let start_sample = (c.start * all_samples) as usize;
-        let end_sample = start_sample + (c.len * all_samples) as usize;
+        let time_per_each = self.inner.iter()
+            .map(SegmentExt::lengthx)
+            .normalize_sum()
+            .map(move |norm| norm*c.time_seconds);
         self.inner.iter()
-            .map(move |seg| {
+            .zip(time_per_each)
+            .map(move |(seg,time_per)| {
                 microsteps(c.sample_rate as f64, time_per).interpolate(seg)
             })
             .flatten()
-            .enumerate()
-            .filter_map(move |(i,samp)| {
-                if i >= start_sample && i <= end_sample { Some(samp) } else { None }
-            })
-            .normalize_1_0(c.min_val, c.max_val)
-            .reverse(c.reverse)
-            .apply_pitch_params(c.min_pitch, c.max_pitch)
-            .cumsum()
-            .normalize(c.sample_rate as f64)
-            .amplitude(AMPLITUDE)
-            .as_i16()
+            .plot_audio(c)
     }
 }
 
@@ -137,6 +220,22 @@ pub enum Segment {
     Line(Linear),
     Quad(Quadradic),
     Cub(Cubic),
+}
+impl SegmentExt for Segment {
+    fn lengthx(&self) -> f64 {
+        match self {
+            Self::Line(l) => l.lengthx(),
+            Self::Quad(q) => q.lengthx(),
+            Self::Cub(c) => c.lengthx(),
+        }
+    }
+    fn as_str(&self) -> String {
+        match self {
+            Self::Line(l) => l.as_str(),
+            Self::Quad(q) => q.as_str(),
+            Self::Cub(c) => c.as_str(),
+        }
+    }
 }
 impl Interpolate for Segment {
     fn expr(&self, t: f64) -> f64  {
@@ -227,6 +326,23 @@ impl Flip for Cubic {
 const AMPLITUDE: f64 = 32767.0;
 
 pub trait SampleIter: Iterator<Item = f64> {
+    fn plot_audio(self, c: Config) -> impl Iterator<Item = i16> 
+    where Self: Sized {
+        let all_samples = c.sample_rate as f64 * c.time_seconds;
+        let start_sample = (c.start * all_samples) as usize;
+        let end_sample = start_sample + (c.len * all_samples) as usize;
+        self.enumerate()
+            .filter_map(move |(i,samp)| {
+                if i >= start_sample && i <= end_sample { Some(samp) } else { None }
+            })
+            .normalize_1_0(c.min_val, c.max_val)
+            .reverse(c.reverse)
+            .apply_pitch_params(c.min_pitch, c.max_pitch)
+            .cumsum()
+            .normalize(c.sample_rate as f64)
+            .amplitude(AMPLITUDE)
+            .as_i16()
+    }
     /// Interpolate value given a interpolatable value (inter) and a series of points in time as
     /// `f64`s (self).
     fn interpolate<T>(self, inter: &T) -> impl Iterator<Item = f64> 
@@ -279,6 +395,14 @@ pub trait SampleIter: Iterator<Item = f64> {
         new.into_iter()
         .map(move |v| {
             if abs_diff < f64::EPSILON { 0.5 } else { (v-lo)/diff }
+        })
+    }
+    fn normalize_sum(self) -> impl Iterator<Item = f64> 
+    where Self: Sized {
+        let vec = self.collect::<Vec<f64>>();
+        let sum: f64 = vec.iter().sum();
+        vec.into_iter().map(move |v| {
+            v/sum
         })
     }
     fn normalize_1_0(self, lo: f64, hi: f64) -> impl Iterator<Item = f64> 
