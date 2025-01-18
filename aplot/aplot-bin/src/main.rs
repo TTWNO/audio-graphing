@@ -3,17 +3,21 @@ use hound;
 use aplot::{Segments, Config, PlottingFunc};
 
 const SVG_PATH: &'static str = "M 10 80 Q 52.5 10, 55 80 T 180 80";
-const EXPR: &'static str = "sin(x) * 15 + 100";
+const EXPR: &'static str = "x^2";
 
 fn main() {
     let config = Config {
         sample_rate: 48_000,
         time_seconds: 2.5,
-        min_val: 50.0,
-        max_val: 150.0,
-        min_pitch: 100.0,
-        max_pitch: 2000.0,
-        reverse: true,
+        x_start: -100.0,
+        x_end: 100.0,
+        min_val: -5.0,
+        max_val: 5.0,
+        min_pitch: 200.0,
+        max_pitch: 1000.0,
+        min_y: -100.0,
+        max_y: 100.0,
+        reverse: false,
         start: 0.0,
         len: 1.0,
     };
@@ -34,8 +38,8 @@ fn main() {
     
     /// From math expression to SVG path and audio samples
     let expr = PlottingFunc::from_str(EXPR).unwrap();
-    println!("<path d=\"{}\" stroke=\"navy\" fill=\"transparent\"/>", expr.to_path_segments(250, 200.0).unwrap());
-    expr.all_samples(config, 200.0)
+    println!("<path id=\"p2\" transform=\"translate(100, 100)\" d=\"{}\" stroke=\"navy\" fill=\"transparent\"/>", expr.to_path_segments(config.clone(), 250, 1.0, 1.0).unwrap());
+    expr.all_samples(config.clone(), 1.0)
         .unwrap()
         .for_each(|samp| {
             writer.write_sample(samp).unwrap();

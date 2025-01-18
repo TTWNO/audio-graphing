@@ -20,6 +20,7 @@ impl PlottingFunc {
     pub fn all_samples(&self, c: Config, factor_x: f64) -> Result<impl Iterator<Item = i16>, fasteval::Error> {
         Ok(
         microsteps(c.sample_rate as f64, c.time_seconds)
+            .map(move |f| (f - 0.5) * c.max_val*2.0)
             .map(move |f| f * factor_x)
             .map(move |f| {
                 let mut cb = move |name:&str, _args:Vec<f64>| -> Option<f64> {
@@ -35,10 +36,10 @@ impl PlottingFunc {
             .plot_audio(c)
             )
     }
-    pub fn to_path_segments(&self, line_segments: usize, factor_x: f64) -> Result<String, fasteval::Error> {
+    pub fn to_path_segments(&self, c: Config, line_segments: usize, factor_x: f64, f2: f64) -> Result<String, fasteval::Error> {
         Ok(
-        microsteps(line_segments as f64, 1.0)
-            .map(move |f| f * factor_x)
+        microsteps(line_segments as f64, f2)
+            .map(move |f| (f - 0.5) * c.max_val*2.0)
             .map(move |f| {
                 let mut cb = move |name:&str, _args:Vec<f64>| -> Option<f64> {
                     match name {
@@ -50,6 +51,12 @@ impl PlottingFunc {
             })
             .collect::<Result<Vec<(f64, f64)>, fasteval::Error>>()?
             .into_iter()
+            .auto_normalize_1_0_y()
+            .reverse_y(c.reverse)
+            .normalize_1_0_x(c.min_val, c.max_val)
+            .apply_y_params(c.min_y, c.max_y)
+            .apply_x_params(c.x_start, c.x_end)
+            .map(move |(fl, fr)| (fl,fr*f2))
             .tuple_windows()
             .map(|((fl, left), (fr, right))| {
                 Linear {
@@ -102,6 +109,7 @@ pub struct Point {
     pub y: f64
 }
 
+#[derive(Clone)]
 pub struct Config {
     /// Sample rate (in Hz)
     pub sample_rate: usize,
@@ -122,6 +130,10 @@ pub struct Config {
     pub start: f64,
     /// Length to render in decimal percentage.
     pub len: f64,
+    pub x_start: f64,
+    pub x_end: f64,
+    pub min_y: f64,
+    pub max_y: f64,
 }
 
 trait PathSegExt {
@@ -204,7 +216,7 @@ impl Segments {
     ///
     /// This means, given a point in time, render that same frequency for a time:
     /// [`Config::time_seconds`].
-    pub fn one_continuous_sample(&self, c: Config, sample_place: f64) -> impl Iterator<Item = i16> {
+    pub fn one_continuous_sample(&self, c: Config, sample_place: f64) -> impl Iterator<Item = i16> + use<'_> {
         let time_per_each = self.inner.iter()
             .map(SegmentExt::lengthx)
             .normalize_sum()
@@ -341,6 +353,58 @@ impl Flip for Cubic {
 
 /// Amplitude for 16 bit WAV sound: (2^15)-1
 const AMPLITUDE: f64 = 32767.0;
+
+pub trait SampleIterVisual: Iterator<Item = (f64, f64)> {
+    /// NOTE: all values must be 0.0 <= y <= 1.0
+    fn apply_y_params(self, min_val: f64, max_val: f64) -> impl Iterator<Item = (f64, f64)> 
+    where Self: Sized {
+        let diff = max_val - min_val;
+        self.map(move |(x,y)| (x,min_val + y*diff))
+    }
+    fn apply_x_params(self, min_val: f64, max_val: f64) -> impl Iterator<Item = (f64, f64)> 
+    where Self: Sized {
+        let diff = max_val - min_val;
+        self.map(move |(x,y)| (min_val + x*diff, y))
+    }
+    /// Re-normalize a value (reversed): y = abs(1-y)
+    fn reverse_y(self, rev: bool) -> impl Iterator<Item = (f64,f64)> 
+    where Self: Sized {
+        let diff = if !rev { 1.0 } else { 0.0 };
+        self.map(move |(x,y)| (x,(diff-y).abs()))
+    }
+    fn auto_normalize_1_0_y(self) -> impl Iterator<Item = (f64, f64)> 
+    where Self: Sized {
+        let new = self.collect::<Vec<(f64, f64)>>();
+        let minmax = new.iter().cloned().map(|(x,y)| y).minmax();
+        let itertools::MinMaxResult::MinMax(y_lo, y_hi) = minmax else {
+            panic!("This can not be called on a list < length of 2");
+        };
+        let diff = y_hi - y_lo;
+        let abs_diff = diff.abs();
+        new.into_iter()
+        .map(move |(x,y)| {
+            if abs_diff < f64::EPSILON { (x,0.5) } else { (x,(y-y_lo)/diff) }
+        })
+    }
+    fn normalize_1_0_y(self, lo: f64, hi: f64) -> impl Iterator<Item = (f64, f64)> 
+    where Self: Sized {
+        let diff = hi - lo;
+        let abs_diff = diff.abs();
+        self.map(move |(x,y)| {
+            if abs_diff < f64::EPSILON { (x,0.5) } else { (x,(y-lo)/diff) }
+        })
+    }
+    fn normalize_1_0_x(self, lo: f64, hi: f64) -> impl Iterator<Item = (f64, f64)> 
+    where Self: Sized {
+        let diff = hi - lo;
+        let abs_diff = diff.abs();
+        self.map(move |(x,y)| {
+            if abs_diff < f64::EPSILON { (0.5,y) } else { ((x-lo)/diff,y) }
+        })
+    }
+}
+impl<T> SampleIterVisual for T
+where T: Iterator<Item = (f64, f64)> {}
 
 pub trait SampleIter: Iterator<Item = f64> {
     fn plot_audio(self, c: Config) -> impl Iterator<Item = i16> 
