@@ -5,4 +5,5 @@ edition = "2021"
 
 [dependencies]
 aplot = { path = "../aplot" }
+fasteval = "0.2.4"
 hound = "3.5.1"
