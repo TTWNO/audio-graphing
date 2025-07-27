@@ -1,11 +1,94 @@
 //! `aplot`
 //!
 //! Audio-plotting (sonification) utilities.
+//!
+//! ## `no_std`
+//!
+//! This library supports both `no_std` and environments which lack an allocator.
+//! To enable `no_std` functionality, disable default features and add the `libm` feature to add
+//! math capabilities.
+//!
+//! This library does not allocate. It returns iterators that can be consumed according to the
+//! necessities of the caller.
 
-use core::f64::consts::PI;
+#![cfg_attr(not(feature = "std"), no_std)]
+
+#[cfg(not(any(feature = "libm", feature = "std")))]
+compile_error!("You must specify either the `std` or `libm` feature for math capabilities. `libm` is recommended for embedded targets, and `std` is recommended for all other targets.");
+
+#[cfg(all(feature = "libm", feature = "std"))]
+compile_error!("The `libm` and `std` feature are mutually exclusive!");
+
 use itertools::Itertools;
-use fasteval::{Evaler, Compiler, Slab, Parser, Instruction};
+use core::{
+    f64::consts::PI,
+    marker::PhantomData,
+};
 
+#[cfg(all(feature = "libm", not(feature = "std")))]
+use libm::{
+    sin,
+    round,
+};
+
+// These are stubs so that the compile_error! macro above is the only thing output when
+// incompatibilities arrise.
+#[cfg(any(
+    not(any(feature = "std", feature = "libm")),
+    all(feature = "std", feature = "libm")
+))]
+fn sin(_f: f64) -> f64 { 0.0 }
+#[cfg(any(
+    not(any(feature = "std", feature = "libm")),
+    all(feature = "std", feature = "libm")
+))]
+fn round(_f: f64) -> f64 { 0.0 }
+
+#[cfg(all(feature = "std", not(feature = "libm")))]
+#[inline(always)]
+fn sin(f: f64) -> f64 {
+    f.sin()
+}
+#[cfg(all(feature = "std", not(feature = "libm")))]
+#[inline(always)]
+fn round(f: f64) -> f64 {
+    f.round()
+}
+
+pub struct PlottingFunc<F,E> {
+    func: F,
+    _marker: PhantomData<E>,
+}
+impl<F, E> PlottingFunc<F, E> {
+    pub fn new(func: F) -> Self {
+        PlottingFunc {
+            func,
+            _marker: PhantomData,
+        }
+    }
+    pub fn all_samples(&mut self, c: Config, factor_x: f64) -> Result<impl Iterator<Item = i16> + use<'_, F, E>, E> 
+    where F: FnMut(f64) -> Result<f64, E> {
+        let mut iter = 
+            microsteps(c.sample_rate as f64, c.time_seconds)
+                .map(move |f| (f - 0.5) * c.max_val*2.0)
+                .map(move |f| f * factor_x)
+                .map(move |f| (self.func)(f));
+        if let Some(Err(err)) = iter.find(Result::is_err) {
+            return Err(err);
+        }
+        Ok(iter.map(Result::ok).while_some().plot_audio(c))
+    }
+    pub fn all_samples_infallible(&mut self, c: Config, factor_x: f64) -> impl Iterator<Item = i16> + use<'_, F, E> 
+    where F: FnMut(f64) -> f64 {
+            microsteps(c.sample_rate as f64, c.time_seconds)
+                .map(move |f| (f - 0.5) * c.max_val*2.0)
+                .map(move |f| f * factor_x)
+                .map(move |f| (self.func)(f))
+                .plot_audio(c)
+    }
+}
+
+/*
 pub struct PlottingFunc {
     slab: Slab,
     inner: Instruction,
@@ -16,25 +99,6 @@ impl PlottingFunc {
         let mut slab = Slab::new();
         let compiled = parser.parse(s, &mut slab.ps)?.from(&slab.ps).compile(&slab.ps, &mut slab.cs);
         Ok(Self { inner: compiled, slab })
-    }
-    pub fn all_samples(&self, c: Config, factor_x: f64) -> Result<impl Iterator<Item = i16>, fasteval::Error> {
-        Ok(
-        microsteps(c.sample_rate as f64, c.time_seconds)
-            .map(move |f| (f - 0.5) * c.max_val*2.0)
-            .map(move |f| f * factor_x)
-            .map(move |f| {
-                let mut cb = move |name:&str, _args:Vec<f64>| -> Option<f64> {
-                    match name {
-                        "x" => Some(f),
-                        _ => None,
-                    }
-                };
-                self.inner.eval(&self.slab, &mut cb)
-            })
-            .collect::<Result<Vec<f64>, fasteval::Error>>()?
-            .into_iter()
-            .plot_audio(c)
-            )
     }
     pub fn to_path_segments(&self, c: Config, line_segments: usize, factor_x: f64, f2: f64) -> Result<String, fasteval::Error> {
         Ok(
@@ -70,38 +134,41 @@ impl PlottingFunc {
             )
     }
 }
+*/
 
+/*
 trait SegmentExt {
     /// Outputs the length of the path, given as a floating-point value.
     /// TODO: The calculations are wrong for curves which go backwards temporarily. In these cases,
     /// we should take into account their entire length, not just just horizontal.
     fn lengthx(&self) -> f64;
-    fn as_str(&self) -> String;
+    //fn as_str(&self) -> String;
 }
 impl SegmentExt for Linear {
     fn lengthx(&self) -> f64 {
         (self.p2.x - self.p1.x).abs()
     }
-    fn as_str(&self) -> String {
-        format!("M {} {} L {} {}", self.p1.x, self.p1.y, self.p2.x, self.p2.y)
-    }
+    //fn as_str(&self) -> String {
+    //    format!("M {} {} L {} {}", self.p1.x, self.p1.y, self.p2.x, self.p2.y)
+    //}
 }
 impl SegmentExt for Quadradic {
     fn lengthx(&self) -> f64 {
         (self.p3.x - self.p1.x).abs()
     }
-    fn as_str(&self) -> String {
-        format!("M {} {} Q {} {}, {} {}", self.p1.x, self.p1.y, self.p2.x, self.p2.y, self.p3.x, self.p3.y)
-    }
+    //fn as_str(&self) -> String {
+    //    format!("M {} {} Q {} {}, {} {}", self.p1.x, self.p1.y, self.p2.x, self.p2.y, self.p3.x, self.p3.y)
+    //}
 }
 impl SegmentExt for Cubic {
     fn lengthx(&self) -> f64 {
         (self.p4.x - self.p1.x).abs()
     }
-    fn as_str(&self) -> String {
-        format!("M {} {} C {} {}, {} {}, {} {}", self.p1.x, self.p1.y, self.p2.x, self.p2.y, self.p3.x, self.p3.y, self.p4.x, self.p4.y)
-    }
+    //fn as_str(&self) -> String {
+    //    format!("M {} {} C {} {}, {} {}, {} {}", self.p1.x, self.p1.y, self.p2.x, self.p2.y, self.p3.x, self.p3.y, self.p4.x, self.p4.y)
+    //}
 }
+*/
 
 #[derive(Debug)]
 pub struct Point {
@@ -136,6 +203,7 @@ pub struct Config {
     pub max_y: f64,
 }
 
+/*
 trait PathSegExt {
     fn endx(&self) -> f64;
     fn endy(&self) -> f64;
@@ -174,6 +242,7 @@ impl PathSegExt for svgtypes::PathSegment {
         }
     }
 }
+
 use svgtypes::PathSegment;
 
 pub struct Segments {
@@ -243,6 +312,7 @@ impl Segments {
             .plot_audio(c)
     }
 }
+*/
 
 #[derive(Debug)]
 pub enum Segment {
@@ -250,6 +320,7 @@ pub enum Segment {
     Quad(Quadradic),
     Cub(Cubic),
 }
+/*
 impl SegmentExt for Segment {
     fn lengthx(&self) -> f64 {
         match self {
@@ -258,14 +329,15 @@ impl SegmentExt for Segment {
             Self::Cub(c) => c.lengthx(),
         }
     }
-    fn as_str(&self) -> String {
-        match self {
-            Self::Line(l) => l.as_str(),
-            Self::Quad(q) => q.as_str(),
-            Self::Cub(c) => c.as_str(),
-        }
-    }
+    //fn as_str(&self) -> String {
+    //    match self {
+    //        Self::Line(l) => l.as_str(),
+    //        Self::Quad(q) => q.as_str(),
+    //        Self::Cub(c) => c.as_str(),
+    //    }
+    //}
 }
+*/
 impl Interpolate for Segment {
     fn expr(&self, t: f64) -> f64  {
         match self {
@@ -372,19 +444,15 @@ pub trait SampleIterVisual: Iterator<Item = (f64, f64)> {
         let diff = if !rev { 1.0 } else { 0.0 };
         self.map(move |(x,y)| (x,(diff-y).abs()))
     }
-    fn auto_normalize_1_0_y(self) -> impl Iterator<Item = (f64, f64)> 
-    where Self: Sized {
-        let new = self.collect::<Vec<(f64, f64)>>();
-        let minmax = new.iter().cloned().map(|(x,y)| y).minmax();
-        let itertools::MinMaxResult::MinMax(y_lo, y_hi) = minmax else {
-            panic!("This can not be called on a list < length of 2");
-        };
+    fn auto_normalize_1_0_y(self) -> Option<impl Iterator<Item = (f64, f64)>> 
+    where Self: Sized + Clone {
+        let (y_hi, y_lo) = self.clone().map(|(_input,output)| output).minmax().into_option()?;
         let diff = y_hi - y_lo;
         let abs_diff = diff.abs();
-        new.into_iter()
+        Some(self
         .map(move |(x,y)| {
             if abs_diff < f64::EPSILON { (x,0.5) } else { (x,(y-y_lo)/diff) }
-        })
+        }))
     }
     fn normalize_1_0_y(self, lo: f64, hi: f64) -> impl Iterator<Item = (f64, f64)> 
     where Self: Sized {
@@ -464,25 +532,19 @@ pub trait SampleIter: Iterator<Item = f64> {
             self.map(|f| f as i16)
     }
     /// TODO: optimize cloning
-    fn auto_normalize_1_0(self) -> impl Iterator<Item = f64> 
-    where Self: Sized {
-        let new = self.collect::<Vec<f64>>();
-        let minmax = new.iter().cloned().minmax();
-        let itertools::MinMaxResult::MinMax(lo, hi) = minmax else {
-            panic!("This can not be called on a list < length of 2");
-        };
+    fn auto_normalize_1_0(self) -> Option<impl Iterator<Item = f64>>
+    where Self: Sized + Clone {
+        let (lo, hi) = self.clone().minmax().into_option()?;
         let diff = hi - lo;
         let abs_diff = diff.abs();
-        new.into_iter()
-        .map(move |v| {
+        Some(self.map(move |v| {
             if abs_diff < f64::EPSILON { 0.5 } else { (v-lo)/diff }
-        })
+        }))
     }
     fn normalize_sum(self) -> impl Iterator<Item = f64> 
-    where Self: Sized {
-        let vec = self.collect::<Vec<f64>>();
-        let sum: f64 = vec.iter().sum();
-        vec.into_iter().map(move |v| {
+    where Self: Sized + Clone {
+        let sum: f64 = self.clone().sum();
+        self.map(move |v| {
             v/sum
         })
     }
@@ -506,7 +568,7 @@ where I: Iterator<Item = f64> {}
 
 /// Converts a frequency to a signed normalized value (-1 <= x <= 1).
 fn normalize(freq: f64, sample_rate: f64) -> f64 {
-    (freq * PI / sample_rate).sin()
+    sin(freq * PI / sample_rate)
 }
 
 pub trait Interpolate {
@@ -547,37 +609,40 @@ fn cubic_bezier(t: f64, p1: f64, p2: f64, p3: f64, p4: f64) -> f64 {
     p1*mt3 + 3.0*p2*mt2*t + 3.0*p3*mt*t2 + p4*t3
 }
 
-#[test]
-fn test_microsteps() {
-    let mut ms = microsteps(48_000.0, 2.0);
-    // NOTE: that these two functions are actually really fickle.
-    // But if they're close enough, it's fine, feel free to remove some digits of precision if
-    // needed.
-    assert!(ms.nth(10).unwrap() - 0.00010416666666666666 < f64::EPSILON);
-    assert!(ms.nth(95980).unwrap() - 0.99990625 < f64::EPSILON);
-}
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_microsteps() {
+        let mut ms = microsteps(48_000.0, 2.0);
+        // NOTE: that these two functions are actually really fickle.
+        // But if they're close enough, it's fine, feel free to remove some digits of precision if
+        // needed.
+        assert!(ms.nth(10).unwrap() - 0.00010416666666666666 < f64::EPSILON);
+        assert!(ms.nth(95980).unwrap() - 0.99990625 < f64::EPSILON);
+    }
 
-#[test]
-fn test_main_func() {
-    // samples and values taken from the Python impl
-    let correct_values = (
-        -24919, 32021, -14044, -27476
-    );
-    // These were the points used in the Python impl.
-    let quad = Quadradic { 
-        p1: Point { x: 0.0, y: 80.0},
-        p2: Point { x: 0.0, y: 10.0},
-        p3: Point { x: 0.0, y: 80.0},
-    };
-    let ans: Vec<i16> = quad.samples(48_000.0, 2.0).collect();
-    assert_eq!(
-        (ans[2000], ans[4000], ans[90000], ans[95000]),
-        correct_values
-    );
+    #[test]
+    fn test_main_func() {
+        // samples and values taken from the Python impl
+        let correct_values = (
+            -24919, 32021, -14044, -27476
+        );
+        // These were the points used in the Python impl.
+        let quad = Quadradic { 
+            p1: Point { x: 0.0, y: 80.0},
+            p2: Point { x: 0.0, y: 10.0},
+            p3: Point { x: 0.0, y: 80.0},
+        };
+        let ans: Vec<i16> = quad.samples(48_000.0, 2.0).collect();
+        assert_eq!(
+            (ans[2000], ans[4000], ans[90000], ans[95000]),
+            correct_values
+        );
+    }
 }
 
 fn microsteps(sample_rate: f64, length_seconds: f64) -> impl Iterator<Item = f64> {
-    let max = (sample_rate * length_seconds).round() as u32;
+    let max = round(sample_rate * length_seconds) as u32;
     let over1 = (sample_rate * length_seconds).recip();
     (0..=max)
         .map(move |i: u32| (i as f64) * over1)

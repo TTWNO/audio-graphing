@@ -3,8 +3,15 @@ name = "aplot"
 version = "0.1.0"
 edition = "2021"
 
-[dependencies]
-fasteval = "0.2.4"
-itertools = { version = "0.14.0", default-features = false }
-svgtypes = "0.15.2"
+[features]
+default = []
+std = []
+libm = ["dep:libm"]
 
+[dependencies]
+itertools = { version = "0.14.0", default-features = false }
+libm = { version = "0.2.15", default-features = false, optional = true }
+
+[[example]]
+file = "examples/use.rs"
+name = "no_alloc"
